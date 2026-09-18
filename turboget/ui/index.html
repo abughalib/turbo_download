@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TurboGet — Multi-WAN Download Manager</title>
+  <meta name="description" content="Multi-WAN parallel download manager using Linux policy routing" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ─── Reset & Variables ──────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:            #080d18;
+      --bg2:           #0d1526;
+      --surface:       rgba(255,255,255,0.04);
+      --surface-hover: rgba(255,255,255,0.07);
+      --border:        rgba(0, 212, 255, 0.15);
+      --border-bright: rgba(0, 212, 255, 0.4);
+      --cyan:          #00d4ff;
+      --cyan-dim:      rgba(0, 212, 255, 0.15);
+      --purple:        #7c3aed;
+      --purple-dim:    rgba(124, 58, 237, 0.2);
+      --green:         #10b981;
+      --green-dim:     rgba(16, 185, 129, 0.15);
+      --red:           #ef4444;
+      --red-dim:       rgba(239, 68, 68, 0.15);
+      --amber:         #f59e0b;
+      --amber-dim:     rgba(245, 158, 11, 0.15);
+      --text:          #e2e8f0;
+      --text-dim:      #64748b;
+      --text-muted:    #334155;
+      --radius:        14px;
+      --radius-sm:     8px;
+      --shadow:        0 8px 32px rgba(0,0,0,0.4);
+      --glow-cyan:     0 0 20px rgba(0, 212, 255, 0.2);
+      --glow-purple:   0 0 20px rgba(124, 58, 237, 0.3);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ─── Animated Background ────────────────────────────────────────── */
+    .bg-mesh {
+      position: fixed; inset: 0; z-index: -1; overflow: hidden;
+      background: radial-gradient(ellipse at 20% 20%, rgba(124,58,237,0.08) 0%, transparent 50%),
+                  radial-gradient(ellipse at 80% 80%, rgba(0,212,255,0.06) 0%, transparent 50%),
+                  radial-gradient(ellipse at 50% 100%, rgba(16,185,129,0.04) 0%, transparent 50%),
+                  var(--bg);
+    }
+    .bg-mesh::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%2300d4ff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+      opacity: 0.5;
+    }
+
+    /* ─── Header ─────────────────────────────────────────────────────── */
+    header {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; gap: 16px;
+      padding: 14px 32px;
+      background: rgba(8, 13, 24, 0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-brand {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 20px; font-weight: 700; letter-spacing: -0.5px;
+      color: var(--cyan); text-shadow: var(--glow-cyan);
+      white-space: nowrap;
+    }
+    .header-brand .bolt { font-size: 22px; filter: drop-shadow(0 0 8px var(--cyan)); }
+
+    .header-stats {
+      display: flex; gap: 8px; flex-wrap: wrap; flex: 1;
+    }
+
+    .stat-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px; font-weight: 500; color: var(--text-dim);
+      transition: all 0.3s;
+    }
+    .stat-pill.active { color: var(--cyan); border-color: var(--border-bright); }
+    .stat-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+    .header-version {
+      font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;
+      white-space: nowrap;
+    }
+
+    /* ─── Layout ─────────────────────────────────────────────────────── */
+    main {
+      max-width: 1200px; margin: 0 auto; padding: 32px 24px 64px;
+      display: flex; flex-direction: column; gap: 28px;
+    }
+
+    .section-label {
+      font-size: 11px; font-weight: 600; letter-spacing: 1.5px;
+      text-transform: uppercase; color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    /* ─── Cards ──────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.06);
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .card:hover { border-color: var(--border-bright); box-shadow: var(--shadow), var(--glow-cyan); }
+
+    .card-title {
+      font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 16px;
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    /* ─── Interface Grid ─────────────────────────────────────────────── */
+    .interfaces-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .iface-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+      transition: all 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+    .iface-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, var(--purple), var(--cyan));
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .iface-card.up::before { opacity: 1; }
+    .iface-card.up { border-color: rgba(0,212,255,0.25); }
+    .iface-card.down { opacity: 0.5; }
+
+    .iface-top {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .iface-name-wrap { display: flex; flex-direction: column; gap: 2px; }
+
+    .iface-emoji { font-size: 22px; margin-bottom: 4px; }
+
+    .iface-alias {
+      font-size: 14px; font-weight: 600; color: var(--text);
+    }
+    .iface-name {
+      font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Status badge */
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    }
+    .status-badge.up   { background: var(--green-dim);  color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+    .status-badge.down { background: var(--red-dim);    color: var(--red);   border: 1px solid rgba(239,68,68,0.3);  }
+
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+    }
+    .status-badge.up .status-dot { animation: pulse-green 2s infinite; }
+
+    @keyframes pulse-green {
+      0%  { box-shadow: 0 0 0 0 rgba(16,185,129,0.6); }
+      70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+      100%{ box-shadow: 0 0 0 0 rgba(16,185,129,0);   }
+    }
+
+    .iface-details {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+
+    .iface-detail {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; color: var(--text-dim);
+    }
+    .iface-detail .val {
+      font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text);
+    }
+
+    .routing-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 11px; font-weight: 500;
+    }
+    .routing-badge.ok  { color: var(--green); }
+    .routing-badge.bad { color: var(--amber); }
+
+    /* ─── Routing Card ───────────────────────────────────────────────── */
+    .routing-card {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 24px; flex-wrap: wrap;
+    }
+
+    .routing-info { flex: 1; }
+    .routing-info h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .routing-info p  { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
+
+    .routing-status-row {
+      display: flex; align-items: center; gap: 8px; font-size: 13px;
+    }
+
+    .routing-indicator {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    }
+    .routing-indicator.ok     { background: var(--green-dim); color: var(--green); }
+    .routing-indicator.partial{ background: var(--amber-dim); color: var(--amber); }
+    .routing-indicator.none   { background: var(--red-dim);   color: var(--red);   }
+
+    .routing-actions { display: flex; gap: 10px; flex-shrink: 0; }
+
+    /* ─── Buttons ────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 20px; border-radius: var(--radius-sm);
+      font-size: 13px; font-weight: 600; font-family: inherit;
+      border: none; cursor: pointer; transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--purple), var(--cyan));
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(124,58,237,0.3);
+    }
+    .btn-primary:hover:not(:disabled) {
+      box-shadow: 0 6px 24px rgba(124,58,237,0.5);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: var(--surface-hover);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover:not(:disabled) { border-color: var(--border-bright); }
+
+    .btn-danger {
+      background: var(--red-dim);
+      color: var(--red);
+      border: 1px solid rgba(239,68,68,0.3);
+    }
+    .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,0.2); }
+
+    .btn-sm { padding: 6px 14px; font-size: 12px; }
+
+    /* ─── Download Form ──────────────────────────────────────────────── */
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+
+    .form-group label {
+      font-size: 12px; font-weight: 500; color: var(--text-dim); letter-spacing: 0.3px;
+    }
+
+    .form-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; }
+    .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+    input[type="text"],
+    input[type="url"],
+    input[type="number"] {
+      width: 100%;
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 13px; font-family: inherit;
+      outline: none; transition: all 0.2s;
+    }
+    input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan-dim); }
+    input::placeholder { color: var(--text-muted); }
+    input[type="number"] { font-family: 'JetBrains Mono', monospace; }
+
+    .form-grid {
+      display: flex; flex-direction: column; gap: 14px;
+    }
+
+    /* ─── Download Cards ─────────────────────────────────────────────── */
+    .download-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      box-shadow: var(--shadow);
+      transition: all 0.3s;
+    }
+    .download-card.active { border-color: rgba(0,212,255,0.3); }
+    .download-card.done   { border-color: rgba(16,185,129,0.3); }
+    .download-card.error, .download-card.failed  { border-color: rgba(239,68,68,0.3); }
+
+    .dl-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 12px; margin-bottom: 14px;
+    }
+    .dl-filename {
+      font-size: 14px; font-weight: 600; color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      word-break: break-all;
+    }
+    .dl-url {
+      font-size: 11px; color: var(--text-muted); margin-top: 2px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px;
+    }
+    .dl-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+    /* Status tag */
+    .dl-status-tag {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    }
+    .dl-status-tag.starting,
+    .dl-status-tag.fetching_info { background: var(--purple-dim); color: #a78bfa; }
+    .dl-status-tag.downloading  { background: var(--cyan-dim);   color: var(--cyan); }
+    .dl-status-tag.done         { background: var(--green-dim);  color: var(--green); }
+    .dl-status-tag.error,
+    .dl-status-tag.failed       { background: var(--red-dim);    color: var(--red); }
+    .dl-status-tag.cancelled    { background: var(--surface);    color: var(--text-dim); }
+
+    /* Progress bar */
+    .dl-progress-wrap { margin-bottom: 12px; }
+    .dl-progress-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 6px; font-size: 12px; color: var(--text-dim);
+    }
+    .dl-progress-row .pct { font-weight: 700; color: var(--text); font-size: 13px; }
+    .dl-progress-row .size-info { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+    .dl-progress-row .speed { color: var(--cyan); font-weight: 600; }
+    .dl-progress-row .eta { color: var(--text-muted); }
+
+    .progress-track {
+      height: 6px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, var(--purple), var(--cyan));
+      transition: width 0.5s ease;
+      position: relative; overflow: hidden;
+      min-width: 4px;
+    }
+    .progress-fill.shimmer::after {
+      content: '';
+      position: absolute; top: 0; left: -200%; width: 200%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+      animation: shimmer 1.8s infinite;
+    }
+    @keyframes shimmer { to { left: 100%; } }
+
+    /* Per-interface stats */
+    .dl-iface-stats {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .iface-stat-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 11px; color: var(--text-dim);
+    }
+    .iface-stat-chip .chip-emoji { font-size: 12px; }
+    .iface-stat-chip .chip-name { font-weight: 500; }
+    .iface-stat-chip .chip-speed { color: var(--cyan); font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+    .iface-stat-chip .chip-status-dot { width: 5px; height: 5px; border-radius: 50%; }
+    .iface-stat-chip .chip-status-dot.active  { background: var(--green); animation: pulse-green 2s infinite; }
+    .iface-stat-chip .chip-status-dot.idle    { background: var(--text-muted); }
+    .iface-stat-chip .chip-status-dot.done    { background: var(--green); }
+    .iface-stat-chip .chip-status-dot.error   { background: var(--red); }
+
+    /* ─── Empty state ────────────────────────────────────────────────── */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 48px; color: var(--text-muted); gap: 10px;
+      border: 1px dashed var(--text-muted);
+      border-radius: var(--radius); opacity: 0.5;
+    }
+    .empty-icon { font-size: 36px; }
+    .empty-state p { font-size: 14px; }
+
+    /* ─── Toast ──────────────────────────────────────────────────────── */
+    .toast-wrap {
+      position: fixed; bottom: 24px; right: 24px; z-index: 999;
+      display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+    }
+    .toast {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 18px;
+      background: rgba(13, 21, 38, 0.95);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow);
+      font-size: 13px; color: var(--text);
+      animation: slide-in 0.3s ease;
+      max-width: 380px;
+    }
+    .toast.success { border-color: rgba(16,185,129,0.4); }
+    .toast.error   { border-color: rgba(239,68,68,0.4); }
+    .toast.warn    { border-color: rgba(245,158,11,0.4); }
+    .toast-icon { font-size: 16px; flex-shrink: 0; }
+
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateX(20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes slide-out {
+      to   { opacity: 0; transform: translateX(20px); }
+    }
+
+    /* ─── Permission modal ───────────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(6px);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal-overlay.hidden { display: none; }
+
+    .modal {
+      background: var(--bg2);
+      border: 1px solid var(--border-bright);
+      border-radius: var(--radius);
+      padding: 28px; max-width: 480px; width: 90%;
+      box-shadow: var(--shadow), var(--glow-cyan);
+    }
+    .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+    .modal p  { font-size: 13px; color: var(--text-dim); margin-bottom: 16px; line-height: 1.6; }
+
+    .modal-cmd {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(0,0,0,0.4); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 12px 16px; margin-bottom: 16px;
+    }
+    .modal-cmd code {
+      font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--cyan);
+      flex: 1;
+    }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+    /* ─── Misc ───────────────────────────────────────────────────────── */
+    .divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .text-dim   { color: var(--text-dim); }
+    .text-muted { color: var(--text-muted); }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+
+    .spin { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 640px) {
+      header { padding: 12px 16px; }
+      main   { padding: 20px 16px 48px; }
+      .routing-card { flex-direction: column; align-items: flex-start; }
+      .form-row, .form-row-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="bg-mesh"></div>
+
+<!-- ─── Header ─────────────────────────────────────────────────────────── -->
+<header>
+  <div class="header-brand">
+    <span class="bolt">⚡</span>
+    TurboGet
+  </div>
+  <div class="header-stats">
+    <span class="stat-pill" id="pill-ifaces"><span class="dot"></span> <span id="txt-ifaces">—</span></span>
+    <span class="stat-pill" id="pill-speed"><span class="dot"></span> <span id="txt-speed">0 MB/s</span></span>
+    <span class="stat-pill" id="pill-dls"><span class="dot"></span> <span id="txt-dls">0 downloads</span></span>
+    <span class="stat-pill" id="pill-conn"><span class="dot"></span> <span id="txt-conn">connecting…</span></span>
+  </div>
+  <div class="header-version">v1.0.0</div>
+</header>
+
+<!-- ─── Main ────────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- Interfaces -->
+  <section id="section-interfaces">
+    <p class="section-label">Network Interfaces</p>
+    <div class="interfaces-grid" id="interfaces-grid">
+      <div class="empty-state">
+        <div class="empty-icon"><span class="spin">⏳</span></div>
+        <p>Loading interfaces…</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Routing -->
+  <section>
+    <p class="section-label">Policy Routing</p>
+    <div class="card routing-card">
+      <div class="routing-info">
+        <h3>Linux Policy Routing</h3>
+        <p>Guarantees each download socket exits through the correct NIC.<br>
+           Required once per boot. Needs root (sudo).</p>
+        <div class="routing-status-row">
+          <span class="routing-indicator none" id="routing-indicator">
+            <span class="status-dot"></span>
+            <span id="routing-text">Checking…</span>
+          </span>
+        </div>
+      </div>
+      <div class="routing-actions">
+        <button class="btn btn-primary" id="btn-setup" onclick="doSetup()">⚙ Setup</button>
+        <button class="btn btn-secondary" id="btn-cleanup" onclick="doCleanup()">✕ Cleanup</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- New Download -->
+  <section>
+    <p class="section-label">New Download</p>
+    <div class="card">
+      <div class="form-grid" id="download-form">
+        <div class="form-group">
+          <label>URL</label>
+          <input type="url" id="url-input" placeholder="https://example.com/file.iso" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Output Path <span class="text-muted">(optional)</span></label>
+            <input type="text" id="output-input" placeholder="filename or directory (default: current dir)" />
+          </div>
+          <div class="form-group">
+            <label>Chunks / Interface</label>
+            <input type="number" id="chunks-input" value="8" min="1" max="32" style="width:100px" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Interfaces <span class="text-muted">(leave blank for all active)</span></label>
+          <input type="text" id="ifaces-input" placeholder="e.g. enp4s0,wlan0" />
+        </div>
+        <div>
+          <button class="btn btn-primary" onclick="startDownload()">▶ Start Download</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Downloads -->
+  <section>
+    <p class="section-label">Downloads</p>
+    <div id="downloads-list">
+      <div class="empty-state" id="no-downloads">
+        <div class="empty-icon">📥</div>
+        <p>No downloads yet</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ─── Toasts ───────────────────────────────────────────────────────────── -->
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<!-- ─── Sudo Modal ───────────────────────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="sudo-modal">
+  <div class="modal">
+    <h3>🔐 Root Permission Required</h3>
+    <p>Policy routing requires <code>root</code> privileges. Run this command in your terminal, then click "Retry" here.</p>
+    <div class="modal-cmd">
+      <code id="sudo-cmd">sudo turboget setup</code>
+      <button class="btn btn-secondary btn-sm" onclick="copyCmd()">📋</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeSudoModal()">Close</button>
+      <button class="btn btn-primary" onclick="retrySetup()">↺ Retry</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── JavaScript ───────────────────────────────────────────────────────── -->
+<script>
+  /* ── State ──────────────────────────────────────────────────────── */
+  const state = {
+    interfaces: [],
+    downloads:  {},   // id → download object
+    connected:  false,
+    totalSpeed: 0,
+  };
+
+  /* ── Helpers ────────────────────────────────────────────────────── */
+  function fmtBytes(b) {
+    if (!b) return '0 B';
+    if (b < 1024) return `${b} B`;
+    if (b < 1048576) return `${(b/1024).toFixed(1)} KB`;
+    if (b < 1073741824) return `${(b/1048576).toFixed(1)} MB`;
+    return `${(b/1073741824).toFixed(2)} GB`;
+  }
+
+  function fmtSpeed(bps) {
+    if (!bps || bps < 100) return '0 MB/s';
+    if (bps < 1048576) return `${(bps/1024).toFixed(0)} KB/s`;
+    return `${(bps/1048576).toFixed(1)} MB/s`;
+  }
+
+  function fmtEta(sec) {
+    if (!sec || sec <= 0) return '—';
+    if (sec < 60) return `${Math.round(sec)}s`;
+    if (sec < 3600) return `${Math.floor(sec/60)}m ${Math.round(sec%60)}s`;
+    return `${Math.floor(sec/3600)}h ${Math.floor((sec%3600)/60)}m`;
+  }
+
+  function ifaceEmoji(name) {
+    name = name.toLowerCase();
+    if (name.startsWith('wlan') || name.startsWith('wl')) return '📶';
+    if (name.startsWith('enx') || name.startsWith('usb') || name.includes('usb')) return '📱';
+    if (name.startsWith('ww')) return '📡';
+    return '🔌';
+  }
+
+  /* ── Toast ──────────────────────────────────────────────────────── */
+  function toast(msg, type = 'info', dur = 4000) {
+    const icons = { success: '✅', error: '❌', warn: '⚠️', info: 'ℹ️' };
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.innerHTML = `<span class="toast-icon">${icons[type]||'ℹ️'}</span> ${msg}`;
+    document.getElementById('toast-wrap').appendChild(el);
+    setTimeout(() => {
+      el.style.animation = 'slide-out 0.3s ease forwards';
+      setTimeout(() => el.remove(), 300);
+    }, dur);
+  }
+
+  /* ── Interface rendering ────────────────────────────────────────── */
+  function renderInterfaces() {
+    const grid = document.getElementById('interfaces-grid');
+    if (!state.interfaces.length) {
+      grid.innerHTML = `<div class="empty-state"><div class="empty-icon">🔌</div><p>No interfaces configured</p></div>`;
+      return;
+    }
+
+    grid.innerHTML = state.interfaces.map(iface => {
+      const cls = iface.up ? 'up' : 'down';
+      const badge = iface.up
+        ? `<span class="status-badge up"><span class="status-dot"></span>Active</span>`
+        : `<span class="status-badge down"><span class="status-dot"></span>Down</span>`;
+
+      const routing = iface.routing_ok
+        ? `<span class="routing-badge ok">✓ routing</span>`
+        : iface.up
+          ? `<span class="routing-badge bad">⚠ no routing</span>`
+          : `<span class="routing-badge bad" style="color:var(--text-muted)">— routing</span>`;
+
+      const reachable = iface.reachable
+        ? `<span style="color:var(--green)">✓ internet</span>`
+        : `<span style="color:var(--text-muted)">— internet</span>`;
+
+      const ip = iface.local_ip
+        ? `<div class="iface-detail"><span>IP</span><span class="val">${iface.local_ip}</span></div>`
+        : '';
+      const gw = iface.gateway
+        ? `<div class="iface-detail"><span>Gateway</span><span class="val">${iface.gateway}</span></div>`
+        : '';
+
+      return `
+        <div class="iface-card ${cls}">
+          <div class="iface-top">
+            <div class="iface-name-wrap">
+              <div class="iface-emoji">${ifaceEmoji(iface.name)}</div>
+              <div class="iface-alias">${iface.alias}</div>
+              <div class="iface-name">${iface.name}</div>
+            </div>
+            ${badge}
+          </div>
+          <div class="iface-details">
+            ${ip}${gw}
+            <div class="iface-detail">${routing}${reachable}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Header pill
+    const up = state.interfaces.filter(i => i.up).length;
+    document.getElementById('txt-ifaces').textContent = `${up}/${state.interfaces.length} interfaces`;
+    document.getElementById('pill-ifaces').classList.toggle('active', up > 0);
+  }
+
+  /* ── Routing status rendering ───────────────────────────────────── */
+  function renderRoutingStatus() {
+    const ifaces  = state.interfaces.filter(i => i.up);
+    const routed  = ifaces.filter(i => i.routing_ok).length;
+    const total   = ifaces.length;
+    const ind     = document.getElementById('routing-indicator');
+    const txt     = document.getElementById('routing-text');
+
+    if (total === 0) {
+      ind.className = 'routing-indicator none';
+      txt.textContent = 'No active interfaces';
+    } else if (routed === total) {
+      ind.className = 'routing-indicator ok';
+      txt.textContent = `Configured (${routed}/${total} interfaces)`;
+    } else if (routed > 0) {
+      ind.className = 'routing-indicator partial';
+      txt.textContent = `Partial — ${routed}/${total} configured`;
+    } else {
+      ind.className = 'routing-indicator none';
+      txt.textContent = 'Not configured — click Setup';
+    }
+  }
+
+  /* ── Download rendering ─────────────────────────────────────────── */
+  function renderDownloads() {
+    const container = document.getElementById('downloads-list');
+    const noMsg     = document.getElementById('no-downloads');
+    const dls       = Object.values(state.downloads);
+
+    // Update header pill
+    const active = dls.filter(d => d.status === 'downloading').length;
+    document.getElementById('txt-dls').textContent =
+      `${active} active • ${dls.length} total`;
+    document.getElementById('pill-dls').classList.toggle('active', active > 0);
+
+    if (!dls.length) {
+      if (!noMsg) {
+        container.innerHTML =
+          `<div class="empty-state" id="no-downloads"><div class="empty-icon">📥</div><p>No downloads yet</p></div>`;
+      }
+      return;
+    }
+    if (noMsg) noMsg.remove();
+
+    // Update or create cards
+    dls.forEach(dl => {
+      let card = document.getElementById(`dl-${dl.id}`);
+      if (!card) {
+        card = document.createElement('div');
+        card.id = `dl-${dl.id}`;
+        card.className = 'download-card';
+        card.style.marginBottom = '12px';
+        container.appendChild(card);
+      }
+
+      const pct    = Math.min(100, dl.progress || 0).toFixed(1);
+      const isAnim = dl.status === 'downloading';
+      const statusMap = {
+        starting:      'Starting',
+        fetching_info: 'Fetching info…',
+        downloading:   'Downloading',
+        done:          'Complete',
+        failed:        'Failed',
+        error:         'Error',
+        cancelled:     'Cancelled',
+      };
+
+      const statusTag = `<span class="dl-status-tag ${dl.status}">${statusMap[dl.status] || dl.status}</span>`;
+
+      const ifaces = dl.interfaces || {};
+      const chips  = Object.entries(ifaces).map(([name, s]) => `
+        <span class="iface-stat-chip">
+          <span class="chip-emoji">${ifaceEmoji(name)}</span>
+          <span class="chip-name">${s.alias}</span>
+          <span class="chip-speed">${fmtSpeed(s.speed)}</span>
+          <span class="chip-status-dot ${s.status}"></span>
+        </span>`).join('');
+
+      const cancelBtn = ['downloading','starting','fetching_info'].includes(dl.status)
+        ? `<button class="btn btn-danger btn-sm" onclick="cancelDownload('${dl.id}')">✕</button>`
+        : '';
+
+      const errMsg = dl.error
+        ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠ ${dl.error}</div>` : '';
+
+      card.className = `download-card ${dl.status === 'downloading' ? 'active' : dl.status}`;
+      card.innerHTML = `
+        <div class="dl-header">
+          <div>
+            <div class="dl-filename">${dl.filename || 'Starting…'}</div>
+            <div class="dl-url">${dl.url}</div>
+          </div>
+          <div class="dl-actions">
+            ${statusTag}
+            ${cancelBtn}
+          </div>
+        </div>
+        <div class="dl-progress-wrap">
+          <div class="dl-progress-row">
+            <span class="pct">${pct}%</span>
+            <span class="size-info">${fmtBytes(dl.downloaded)} / ${fmtBytes(dl.size)}</span>
+            <span class="speed">${fmtSpeed(dl.speed)}</span>
+            <span class="eta">ETA ${fmtEta(dl.eta)}</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill ${isAnim ? 'shimmer' : ''}"
+                 style="width:${pct}%"></div>
+          </div>
+        </div>
+        ${chips ? `<div class="dl-iface-stats">${chips}</div>` : ''}
+        ${errMsg}`;
+    });
+
+    // Update overall combined speed pill
+    const combined = Object.values(state.downloads)
+      .filter(d => d.status === 'downloading')
+      .reduce((s, d) => s + (d.speed || 0), 0);
+    document.getElementById('txt-speed').textContent = fmtSpeed(combined);
+    document.getElementById('pill-speed').classList.toggle('active', combined > 0);
+  }
+
+  /* ── Load initial data ──────────────────────────────────────────── */
+  async function loadInterfaces() {
+    try {
+      const r = await fetch('/api/interfaces');
+      state.interfaces = await r.json();
+      renderInterfaces();
+      renderRoutingStatus();
+    } catch(e) {
+      console.error('Failed to load interfaces:', e);
+    }
+  }
+
+  async function loadDownloads() {
+    try {
+      const r = await fetch('/api/downloads');
+      const list = await r.json();
+      list.forEach(dl => { state.downloads[dl.id] = dl; });
+      renderDownloads();
+    } catch(e) {}
+  }
+
+  /* ── SSE connection ─────────────────────────────────────────────── */
+  function connectSSE() {
+    const es = new EventSource('/api/events');
+
+    es.onopen = () => {
+      state.connected = true;
+      document.getElementById('txt-conn').textContent = 'live';
+      document.getElementById('pill-conn').classList.add('active');
+    };
+
+    es.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        handleSSE(msg);
+      } catch(e) {}
+    };
+
+    es.onerror = () => {
+      state.connected = false;
+      document.getElementById('txt-conn').textContent = 'reconnecting…';
+      document.getElementById('pill-conn').classList.remove('active');
+      es.close();
+      setTimeout(connectSSE, 3000);
+    };
+  }
+
+  function handleSSE(msg) {
+    if (msg.type === 'download_update') {
+      state.downloads[msg.data.id] = msg.data;
+      renderDownloads();
+    } else if (msg.type === 'routing_changed') {
+      loadInterfaces();  // Refresh interface/routing status
+    }
+  }
+
+  /* ── Actions ────────────────────────────────────────────────────── */
+  async function startDownload() {
+    const url = document.getElementById('url-input').value.trim();
+    if (!url) { toast('Please enter a URL', 'error'); return; }
+
+    const body = {
+      url,
+      output:               document.getElementById('output-input').value.trim() || null,
+      interfaces:           document.getElementById('ifaces-input').value.trim() || null,
+      chunks_per_interface: parseInt(document.getElementById('chunks-input').value) || 8,
+    };
+
+    try {
+      const r = await fetch('/api/download/start', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (r.ok) {
+        toast('Download started!', 'success');
+        document.getElementById('url-input').value = '';
+        document.getElementById('output-input').value = '';
+      } else {
+        toast(`Error: ${data.detail || 'Failed to start'}`, 'error');
+      }
+    } catch(e) {
+      toast('Failed to start download', 'error');
+    }
+  }
+
+  async function cancelDownload(id) {
+    await fetch(`/api/downloads/${id}/cancel`, { method: 'POST' });
+    toast('Download cancelled', 'warn');
+  }
+
+  async function doSetup() {
+    document.getElementById('btn-setup').disabled = true;
+    document.getElementById('btn-setup').textContent = '⏳ Setting up…';
+    try {
+      const r = await fetch('/api/routing/setup', { method: 'POST' });
+      const data = await r.json();
+
+      if (data.success) {
+        toast(`Routing configured for ${data.configured.length} interface(s)`, 'success');
+        await loadInterfaces();
+      } else if (data.permission_error) {
+        document.getElementById('sudo-cmd').textContent = data.command || 'sudo turboget setup';
+        document.getElementById('sudo-modal').classList.remove('hidden');
+      } else {
+        toast(data.message || 'Setup failed', 'error');
+      }
+    } catch(e) {
+      toast('Setup request failed', 'error');
+    } finally {
+      document.getElementById('btn-setup').disabled = false;
+      document.getElementById('btn-setup').innerHTML = '⚙ Setup';
+    }
+  }
+
+  async function doCleanup() {
+    document.getElementById('btn-cleanup').disabled = true;
+    try {
+      const r = await fetch('/api/routing/cleanup', { method: 'POST' });
+      const data = await r.json();
+      if (data.success) {
+        toast('Routing rules removed', 'success');
+        await loadInterfaces();
+      } else {
+        toast('Cleanup failed', 'error');
+      }
+    } catch(e) {
+      toast('Cleanup request failed', 'error');
+    } finally {
+      document.getElementById('btn-cleanup').disabled = false;
+    }
+  }
+
+  function closeSudoModal() { document.getElementById('sudo-modal').classList.add('hidden'); }
+  function retrySetup() { closeSudoModal(); doSetup(); }
+  function copyCmd() {
+    navigator.clipboard.writeText(document.getElementById('sudo-cmd').textContent);
+    toast('Command copied to clipboard', 'success');
+  }
+
+  // URL input — press Enter to start
+  document.getElementById('url-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') startDownload();
+  });
+
+  /* ── Init ───────────────────────────────────────────────────────── */
+  loadInterfaces();
+  loadDownloads();
+  connectSSE();
+  setInterval(loadInterfaces, 15000);   // Refresh interface status every 15s
+</script>
+</body>
+</html>

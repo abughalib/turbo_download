@@ -1,0 +1,9 @@
+{
+    "interfaces": [
+    ],
+    "chunks_per_interface": 8,
+    "max_retries": 3,
+    "connect_timeout": 30,
+    "read_timeout": 120,
+    "output_dir": "."
+}
