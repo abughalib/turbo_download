@@ -41,7 +41,7 @@ ROUTING_PRIORITY_BASE = 2000
 @dataclass
 class NetworkInterface:
     name: str            # kernel name, e.g. "wlan0"
-    alias: str           # human name, e.g. "Jio Hotspot"
+    alias: str           # human name, e.g. "WiFi Hotspot"
     local_ip: str        # "192.168.43.156"
     gateway: str         # "192.168.43.1"
     table_id: int        # policy routing table id

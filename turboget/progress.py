@@ -10,8 +10,8 @@ Layout
 
   Interface        Speed       Downloaded   Chunks   Status
   ────────────────────────────────────────────────────────────
-  📶  Jio Hotspot  12.3 MB/s  1.4 GB       18/24    ⚡ active
-  📱  Airtel USB    8.7 MB/s  1.1 GB       14/24    ⚡ active
+  📶  WiFi Hotspot 12.3 MB/s  1.4 GB       18/24    ⚡ active
+  📱  USB Tether    8.7 MB/s  1.1 GB       14/24    ⚡ active
   🔌  Home Fiber   11.1 MB/s  1.3 GB       16/24    ⚡ active
   ────────────────────────────────────────────────────────────
   Combined: 32.1 MB/s  •  3 interfaces  •  All healthy

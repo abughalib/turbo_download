@@ -2,7 +2,9 @@
 
 **Multi-WAN parallel download manager for Linux.**
 
-TurboGet splits a file into chunks and downloads each chunk through a **different internet connection** simultaneously — your home broadband, Airtel USB tethering, and Jio hotspot all working at once.
+TurboGet splits a file into chunks and downloads each chunk through a **different internet connection** simultaneously — your home broadband, a USB tethered connection, and a Wi-Fi hotspot all working at once.
+
+It features a command-line interface as well as a modern Web UI to manage downloads and monitor per-interface speeds in real time.
 
 ```
 ╭─ ⚡ TurboGet v1.0.0 ── ubuntu-24.04.2-desktop-amd64.iso  6.14 GB ─────╮
@@ -22,7 +24,7 @@ TurboGet splits a file into chunks and downloads each chunk through a **differen
 
 ## Why TurboGet?
 
-Most download managers open multiple connections to the same server — but all through the **same NIC**. TurboGet is different:
+Most download managers open multiple connections to the same server — but all through the **same network interface (NIC)**. TurboGet is different:
 
 | Feature | TurboGet | aria2 / wget |
 |---|---|---|
@@ -31,9 +33,10 @@ Most download managers open multiple connections to the same server — but all 
 | Distributes data cap across ISPs | ✅ | ❌ |
 | Work-stealing chunk scheduler | ✅ | — |
 | Resume interrupted downloads | ✅ | ✅ |
+| Web UI Dashboard | ✅ | — |
 | No external proxy required | ✅ | — |
 
-**Primary use case**: You have Jio + Airtel + home broadband. Each has a data cap. TurboGet downloads 1/3 of the file from each ISP, tripling your effective cap and potentially tripling your speed.
+**Primary use case**: You have multiple internet connections (e.g., Ethernet + Wi-Fi + USB Tethering) with limited bandwidth or data caps. TurboGet downloads portions of the file from each ISP simultaneously, bypassing individual caps and aggregating total bandwidth.
 
 ---
 
@@ -42,13 +45,13 @@ Most download managers open multiple connections to the same server — but all 
 ### 1. HTTP Range Requests
 Most file servers support `Range: bytes=X-Y` headers. TurboGet splits the file into chunks and assigns each chunk to a different interface.
 
-### 2. Linux Policy Routing (the key insight)
-Simply binding a socket to a local IP is not enough — the kernel's default route table is destination-based and may still route packets via the wrong NIC.
+### 2. Linux Policy Routing (The Secret Sauce)
+Simply binding a socket to a local IP is not enough — the Linux kernel's default route table is destination-based and may still route packets via the wrong NIC.
 
 TurboGet creates a **private routing table per interface**:
 
 ```bash
-# Per-interface routing table (e.g., for wlan0 at 192.168.43.156)
+# Example: Per-interface routing table (e.g., for wlan0 at 192.168.43.156)
 ip route add 192.168.43.0/24 dev wlan0 src 192.168.43.156 table 102
 ip route add default via 192.168.43.1 dev wlan0 table 102
 
@@ -70,25 +73,18 @@ All chunks share a single queue. Faster interfaces naturally pull more chunks. I
 - Python 3.11+
 - `sudo` for the one-time routing setup
 
+**Note on WSL / WSL2:** TurboGet relies on Linux policy routing and direct access to multiple network interfaces. By default, WSL2 uses a single virtual NAT adapter connected to the Windows host. Because the Windows host manages the physical routing, TurboGet's multi-WAN capabilities will **not** work inside a standard WSL setup. You must run it on a native Linux host (or a VM with physically bridged adapters).
+
 ### Install with pip
 
 ```bash
 pip install turboget
 ```
 
-### Install from source
+### Install with uv (recommended)
 
 ```bash
-git clone https://github.com/yourusername/turboget
-cd turboget
-pip install -e .
-```
-
-### Install with uv (recommended for development)
-
-```bash
-uv sync
-uv run turboget --help
+uv tool install turboget
 ```
 
 ---
@@ -98,30 +94,29 @@ uv run turboget --help
 ### 1. Configure your interfaces
 
 ```bash
-# Auto-detect and write config
+# Auto-detect interfaces and save to config.json
 turboget config detect --write
-
-# Or edit config.json manually:
 ```
 
+Example `config.json`:
 ```json
 {
     "interfaces": [
         {
             "name": "enp4s0",
-            "alias": "Home Fiber",
+            "alias": "Home Ethernet",
             "metric": 100,
             "enabled": true
         },
         {
-            "name": "enxc03eba3bda6f",
-            "alias": "Jio USB",
+            "name": "enx...",
+            "alias": "USB Tether",
             "metric": 200,
             "enabled": true
         },
         {
             "name": "wlan0",
-            "alias": "Airtel Hotspot",
+            "alias": "WiFi Hotspot",
             "metric": 300,
             "enabled": true
         }
@@ -146,23 +141,17 @@ This creates the `ip rule` and `ip route` entries. They persist until reboot or 
 turboget verify
 ```
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      Network Interfaces                              │
-├──────────────────┬───────────────┬──────────────────┬───────┬───────┤
-│ Interface        │ Alias         │ Local IP         │ Net   │ Route │
-├──────────────────┼───────────────┼──────────────────┼───────┼───────┤
-│ enp4s0           │ Home Fiber    │ 192.168.1.105    │ ✓     │ ✓     │
-│ enxc03eba3bda6f  │ Jio USB       │ 192.168.42.87    │ ✓     │ ✓     │
-│ wlan0            │ Airtel Hotspot│ 192.168.43.156   │ ✓     │ ✓     │
-└──────────────────┴───────────────┴──────────────────┴───────┴───────┘
-✓ All routing rules in place.
-```
-
 ### 4. Download!
 
+**Via CLI:**
 ```bash
 turboget download https://example.com/bigfile.iso
+```
+
+**Via Web UI:**
+```bash
+# Launch the dashboard locally
+turboget ui --open
 ```
 
 ---
@@ -181,13 +170,14 @@ Options:
 
 Commands:
   download  Download a file using all configured network interfaces.
+  ui        Launch the TurboGet web UI dashboard.
   verify    Check interfaces, internet connectivity, and routing status.
   setup     Configure Linux policy routing (requires sudo).
   cleanup   Remove TurboGet policy routing rules (requires sudo).
   config    View and manage TurboGet configuration.
 ```
 
-### download
+### CLI Download Options
 
 ```
 turboget download [OPTIONS] URL
@@ -200,32 +190,6 @@ Options:
   --fallback             Download even without Range support (single stream)
   --single               Force single-stream (no chunk splitting)
 ```
-
-### config detect
-
-```bash
-# Show detected interfaces (no changes made)
-turboget config detect
-
-# Auto-write to config.json
-turboget config detect --write
-```
-
----
-
-## Configuration Reference
-
-| Field | Default | Description |
-|---|---|---|
-| `interfaces[].name` | — | Kernel interface name (e.g. `wlan0`, `enp4s0`) |
-| `interfaces[].alias` | — | Human-readable label shown in the UI |
-| `interfaces[].metric` | `200` | Lower = higher priority for browsing (via NetworkManager) |
-| `interfaces[].enabled` | `true` | Set to `false` to skip an interface without removing it |
-| `chunks_per_interface` | `8` | Chunks assigned per interface (more = better work-stealing granularity) |
-| `max_retries` | `3` | Times a failed chunk is retried before giving up |
-| `connect_timeout` | `30` | TCP connect timeout in seconds |
-| `read_timeout` | `120` | Per-block read timeout in seconds |
-| `output_dir` | `"."` | Default directory for downloaded files |
 
 ---
 
@@ -283,7 +247,9 @@ turboget/
 ├── scheduler.py    — Chunk creation, work-stealing queue, resume state
 ├── downloader.py   — Async aiohttp workers (one per NIC)
 ├── writer.py       — Pre-allocated file, seek+write at byte offsets
-└── progress.py     — Rich live terminal display
+├── progress.py     — Rich live terminal display
+├── server.py       — FastAPI backend for UI and live updates
+└── ui/index.html   — Single-page Glassmorphism web dashboard
 ```
 
 ---
@@ -291,11 +257,3 @@ turboget/
 ## License
 
 MIT License — see [LICENSE](LICENSE).
-
-## Contributing
-
-Pull requests welcome! Particularly interested in:
-- macOS support (routing via `route add` / `pfctl`)
-- Speed test before chunk distribution
-- GUI frontend
-- Per-interface data usage tracking
